@@ -2,19 +2,26 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const AWS = require('aws-sdk');
+const { S3 } = require('@aws-sdk/client-s3');
 const { verifyToken, isAdmin } = require('./auth');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+if (!process.env.R2_ACCESS_KEY || !process.env.R2_SECRET_KEY || !process.env.R2_ACCOUNT_ID || !process.env.R2_BUCKET_NAME) {
+  console.error('❌ Thiếu biến môi trường R2. Kiểm tra file .env');
+  process.exit(1);
+}
+
 // Cấu hình kết nối R2 (S3 API)
-const s3 = new AWS.S3({
-  endpoint: process.env.R2_ENDPOINT,
-  accessKeyId: process.env.R2_ACCESS_KEY,
-  secretAccessKey: process.env.R2_SECRET_KEY,
-  signatureVersion: 'v4',
+const s3 = new S3({
+  region: 'auto', // R2 yêu cầu 'auto'
+  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY,
+    secretAccessKey: process.env.R2_SECRET_KEY,
+  },
 });
 
 const BUCKET = process.env.R2_BUCKET_NAME;
@@ -24,8 +31,12 @@ const BOOKING_FILE = 'bookings.json';
 // Đọc file từ R2
 async function readFromS3(filename) {
   try {
-    const data = await s3.getObject({ Bucket: BUCKET, Key: filename }).promise();
-    return JSON.parse(data.Body.toString());
+    const response = await s3.getObject({
+      Bucket: BUCKET,
+      Key: filename,
+    });
+    const body = await response.Body.transformToString();
+    return JSON.parse(body);
   } catch (err) {
     if (err.code === 'NoSuchKey') {
       // Tạo 7 Server nếu chưa có
@@ -78,7 +89,7 @@ async function writeToS3(filename, data) {
     Key: filename,
     Body: JSON.stringify(data, null, 2),
     ContentType: 'application/json',
-  }).promise();
+  });
 }
 
 // === API ===
