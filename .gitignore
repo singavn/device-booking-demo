@@ -6,3 +6,22 @@ npm-debug.log*
 dist/
 build/
 .DS_Store
+
+# Environment Variables
+backend/.env
+frontend/.env
+
+# Node.js
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Build
+build/
+dist/
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
