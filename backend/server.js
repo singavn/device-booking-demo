@@ -3,8 +3,10 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const AWS = require('aws-sdk');
-const { verifyToken, isAdmin } = require('./auth');
-
+const { verifyToken, generateToken, isAdmin } = require('./auth');
+const { users } = require("./user")
+const { devicesInit } = require("./device")
+let devices = [...devicesInit]
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -24,7 +26,9 @@ const BOOKING_FILE = 'bookings.json';
 // Đọc file từ R2
 async function readFromS3(filename) {
   try {
-    const data = await s3.getObject({ Bucket: BUCKET, Key: filename }).promise();
+    const data = await s3.getObject({ Bucket: BUCKET, Key: filename },(err,data)=>{
+      console.log(data);
+    });
     return JSON.parse(data.Body.toString());
   } catch (err) {
     if (err.code === 'NoSuchKey') {
@@ -83,65 +87,42 @@ async function writeToS3(filename, data) {
 
 // === API ===
 // ✅ Tạo thiết bị mới (chỉ admin)
-app.post('/api/devices', verifyToken, isAdmin, async (req, res) => {
-  const { name, location, status = 'available', max_duration = 180 } = req.body;
-  try {
-    const devices = await readFromS3('devices.json');
-    const newDevice = {
-      id: devices.length + 1,
-      name,
-      location,
-      status,
-      max_duration
-    };
-    devices.push(newDevice);
-    await writeToS3('devices.json', devices);
-    res.status(201).json(newDevice);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+app.post('/api/devices', async (req, res) => {
+  verifyToken(req, res, (user)=>{
+    const {role } = user
+    if ("admin" != role) return res.status(403).json({ error: 'User role is invalid.' })
+    const { deviceName } = req
+    devices.push({id:devices.length + 1, name: deviceName})
+    return res.status(200).json()
+  })
 });
 
 // ✅ Sửa thiết bị (chỉ admin)
 app.put('/api/devices/:id', verifyToken, isAdmin, async (req, res) => {
-  const id = parseInt(req.params.id);
-  const updates = req.body;
-
-  try {
-    const devices = await readFromS3('devices.json');
-    const device = devices.find(d => d.id === id);
-    if (!device) return res.status(404).json({ error: 'Không tìm thấy thiết bị.' });
-
-    Object.assign(device, updates);
-    await writeToS3('devices.json', devices);
-    res.json(device);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  verifyToken(req, res, (user)=>{
+    const {role } = user
+    if ("admin" != role) return res.status(403).json({ error: 'User role is invalid.' })
+    const {id} = req.params
+    const { deviceName } = req
+    deviceIndex = devices.findIndex(z => z.id == id)
+    devices[deviceIndex].name = deviceName
+    return res.status(200).json(devices)
+  })
 });
 
 // ✅ Xoá thiết bị (chỉ admin)
-app.delete('/api/devices/:id', verifyToken, isAdmin, async (req, res) => {
-  const id = parseInt(req.params.id);
-  try {
-    const devices = await readFromS3('devices.json');
-    const filtered = devices.filter(d => d.id !== id);
-    if (devices.length === filtered.length) {
-      return res.status(404).json({ error: 'Không tìm thấy thiết bị.' });
-    }
-    await writeToS3('devices.json', filtered);
-    res.json({ message: 'Xoá thành công!' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+app.delete('/api/devices/:id', async (req, res) => {
+  verifyToken(req, res, (user)=>{
+    const { role } = user
+    if ("admin" != role) return res.status(403).json({ error: 'User role is invalid.' })
+    const {id} = req.params
+    devices = devices.filter(z => z.id != parseInt(id))
+    return res.status(200).json(devices)
+  })
 });
 
 app.get('/api/devices', async (req, res) => {
-  try {
-    res.json(await readFromS3(DEVICE_FILE));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  return res.json(devices);
 });
 
 app.get('/api/bookings', async (req, res) => {
@@ -233,24 +214,23 @@ app.delete('/api/bookings/:id', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`✅ Backend: http://localhost:${PORT}`);
 });
 
 // API: login
 app.post('/api/login', async (req, res) => {
-  const { email, password } = req.body;
-
+  const { email, passWord } = req.body;
+  if (email == null || passWord == null) return res.status(400).json({ error: 'Email hoặc mật khẩu sai.' });
   try {
-    const users = await readFromS3('users.json');
     const user = users.find(u => u.email === email);
 
     if (!user) {
       return res.status(400).json({ error: 'Email hoặc mật khẩu sai.' });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    const isMatch = passWord == user.passWord;
     if (!isMatch) {
       return res.status(400).json({ error: 'Email hoặc mật khẩu sai.' });
     }
@@ -294,3 +274,4 @@ app.post('/api/users', verifyToken, isAdmin, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+

@@ -25,8 +25,7 @@ exports.verifyToken = (req, res, next) => {
     if (err) {
       return res.status(403).json({ error: 'Token không hợp lệ.' });
     }
-    req.user = user;
-    next();
+    next(user);
   });
 };
 
