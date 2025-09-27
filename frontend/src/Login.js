@@ -7,7 +7,7 @@ function Login({ onLogin }) {
   const handleSubmit = (e) => {
     e.preventDefault();
     // Giả lập đăng nhập thành công
-    onLogin({ name: 'User', role: 'user', email });
+    onLogin({ name: email, password });
   };
 
   return (

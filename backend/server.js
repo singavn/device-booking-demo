@@ -6,7 +6,9 @@ const AWS = require('aws-sdk');
 const { verifyToken, generateToken, isAdmin } = require('./auth');
 const { users } = require("./user")
 const { devicesInit } = require("./device")
+const { bookingInitial } = require("./bookings")
 let devices = [...devicesInit]
+let bookings = [...bookingInitial]
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -26,10 +28,10 @@ const BOOKING_FILE = 'bookings.json';
 // Đọc file từ R2
 async function readFromS3(filename) {
   try {
-    const data = await s3.getObject({ Bucket: BUCKET, Key: filename },(err,data)=>{
+    const data = await s3.getObject({ Bucket: BUCKET, Key: filename }, (err, data) => {
       console.log(data);
     });
-    return JSON.parse(data.Body.toString());
+    return JSON.parse(data.Body);
   } catch (err) {
     if (err.code === 'NoSuchKey') {
       // Tạo 7 Server nếu chưa có
@@ -88,21 +90,21 @@ async function writeToS3(filename, data) {
 // === API ===
 // ✅ Tạo thiết bị mới (chỉ admin)
 app.post('/api/devices', async (req, res) => {
-  verifyToken(req, res, (user)=>{
-    const {role } = user
+  verifyToken(req, res, (user) => {
+    const { role } = user
     if ("admin" != role) return res.status(403).json({ error: 'User role is invalid.' })
     const { deviceName } = req
-    devices.push({id:devices.length + 1, name: deviceName})
+    devices.push({ id: devices.length + 1, name: deviceName })
     return res.status(200).json()
   })
 });
 
 // ✅ Sửa thiết bị (chỉ admin)
 app.put('/api/devices/:id', verifyToken, isAdmin, async (req, res) => {
-  verifyToken(req, res, (user)=>{
-    const {role } = user
+  verifyToken(req, res, (user) => {
+    const { role } = user
     if ("admin" != role) return res.status(403).json({ error: 'User role is invalid.' })
-    const {id} = req.params
+    const { id } = req.params
     const { deviceName } = req
     deviceIndex = devices.findIndex(z => z.id == id)
     devices[deviceIndex].name = deviceName
@@ -111,15 +113,15 @@ app.put('/api/devices/:id', verifyToken, isAdmin, async (req, res) => {
 });
 
 // ✅ Xoá thiết bị (chỉ admin)
-app.delete('/api/devices/:id', async (req, res) => {
-  verifyToken(req, res, (user)=>{
-    const { role } = user
-    if ("admin" != role) return res.status(403).json({ error: 'User role is invalid.' })
-    const {id} = req.params
-    devices = devices.filter(z => z.id != parseInt(id))
-    return res.status(200).json(devices)
-  })
-});
+// app.delete('/api/devices/:id', async (req, res) => {
+//   verifyToken(req, res, (user) => {
+//     const { role } = user
+//     if ("admin" != role) return res.status(403).json({ error: 'User role is invalid.' })
+//     const { id } = req.params
+//     devices = devices.filter(z => z.id != parseInt(id))
+//     return res.status(200).json(devices)
+//   })
+// });
 
 app.get('/api/devices', async (req, res) => {
   return res.json(devices);
@@ -127,7 +129,7 @@ app.get('/api/devices', async (req, res) => {
 
 app.get('/api/bookings', async (req, res) => {
   try {
-    res.json(await readFromS3(BOOKING_FILE));
+    res.json(bookings);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -136,8 +138,6 @@ app.get('/api/bookings', async (req, res) => {
 app.post('/api/bookings', async (req, res) => {
   const { userId, deviceId, start, end, reason } = req.body;
   try {
-    const devices = await readFromS3(DEVICE_FILE);
-    const bookings = await readFromS3(BOOKING_FILE);
 
     const device = devices.find(d => d.id === deviceId);
     if (!device || device.status !== 'available') {
@@ -151,9 +151,13 @@ app.post('/api/bookings', async (req, res) => {
       return res.status(400).json({ error: 'Trùng thời gian.' });
     }
 
+    const user = users.find(z => z.id = userId)
+
     const newBooking = {
       id: bookings.length + 1,
       userId,
+      userName:user.userName,
+      userEmail: user.email,
       deviceId,
       start,
       end,
@@ -163,7 +167,6 @@ app.post('/api/bookings', async (req, res) => {
     };
 
     bookings.push(newBooking);
-    await writeToS3(BOOKING_FILE, bookings);
     res.status(201).json(newBooking);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -199,19 +202,22 @@ app.put('/api/bookings/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/bookings/:id', async (req, res) => {
+app.post('/api/bookings/:id', async (req, res) => {
   const id = parseInt(req.params.id);
-  try {
-    const bookings = await readFromS3(BOOKING_FILE);
-    const filtered = bookings.filter(b => b.id !== id);
-    if (bookings.length === filtered.length) {
-      return res.status(404).json({ error: 'Không tìm thấy.' });
+  const {userName} = req.body
+    try {
+      const booking = bookings.find(b => b.id === id)
+      if(booking.userEmail != userName){
+        return res.status(400).json({"message":"User is not valid role"})
+      }
+      const filtered = bookings.filter(b => b.id !== id);
+      
+      bookings = filtered
+
+      res.json(bookings);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
-    await writeToS3(BOOKING_FILE, filtered);
-    res.json({ message: 'Xoá thành công!' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
 });
 
 const PORT = process.env.PORT || 3000;
